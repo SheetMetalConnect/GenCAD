@@ -327,14 +327,34 @@ def build_app():
                 "The slider controls how many attempts to try — more attempts, better results."
             )
 
-        def generate(image, attempts):
+        # --- History ---
+        gr.Markdown("### Generation History")
+        history_gallery = gr.Gallery(
+            label="Previous results (most recent first)",
+            columns=6,
+            height=140,
+            object_fit="contain",
+        )
+        history_state = gr.State([])
+
+        def generate(image, attempts, history):
             canny, stl_path, status = run_inference(image, num_attempts=int(attempts))
-            return canny, stl_path, status, stl_path
+            # Save canny to a temp file for the gallery (Gradio 6.x needs file paths)
+            history = list(history) if history else []
+            if canny is not None:
+                canny_path = os.path.join(tempfile.mkdtemp(), "canny.png")
+                canny.save(canny_path)
+                history.insert(0, canny_path)
+                history = history[:18]
+            return canny, stl_path, status, stl_path, history, history
 
         generate_btn.click(
             fn=generate,
-            inputs=[input_image, attempts_slider],
-            outputs=[canny_output, model_viewer, status_box, stl_download],
+            inputs=[input_image, attempts_slider, history_state],
+            outputs=[
+                canny_output, model_viewer, status_box, stl_download,
+                history_gallery, history_state,
+            ],
         )
 
         # --- Examples ---
