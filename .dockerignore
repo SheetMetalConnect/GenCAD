@@ -1,0 +1,12 @@
+# Exclude large data and checkpoints (mounted as volumes at runtime)
+data/
+model/ckpt/
+results/
+
+# Misc
+*.zip
+__MACOSX/
+.git/
+.DS_Store
+__pycache__/
+*.pyc

@@ -23,4 +23,5 @@ SHELL ["conda", "run", "-n", "gencad_env", "/bin/bash", "-c"]
 
 COPY . .
 
-CMD ["conda", "run", "-n", "gencad_env", "python", "demo.py"]
+EXPOSE 7860
+CMD ["conda", "run", "-n", "gencad_env", "xvfb-run", "--server-args=-screen 0 2048x2048x24", "python", "demo.py"]

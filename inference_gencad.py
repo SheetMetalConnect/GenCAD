@@ -149,10 +149,14 @@ def main(img_dir, export_stl=False, export_img=False):
     resnet_params = {"d_in": 256, "n_blocks": 10, "d_main": 2048, "d_hidden": 2048, 
                         "dropout_first": 0.1, "dropout_second": 0.1, "d_out": 256}
 
-    # device
+    # device — prefer MPS on Apple Silicon, fallback to CUDA then CPU
 
-    device_num = 0
-    device = torch.device(f"cuda:{device_num}")
+    if torch.backends.mps.is_available():
+        device = torch.device("mps")
+    elif torch.cuda.is_available():
+        device = torch.device("cuda:0")
+    else:
+        device = torch.device("cpu")
     phase = "test"
     batch_size = 64
 
@@ -211,7 +215,7 @@ def main(img_dir, export_stl=False, export_img=False):
 
     cad_decoder = VanillaCADTransformer(config).to(config.device) 
 
-    cad_ckpt = torch.load(cad_ckpt_path)
+    cad_ckpt = torch.load(cad_ckpt_path, map_location="cpu")
     cad_decoder.load_state_dict(cad_ckpt['model_state_dict'])
     cad_decoder.eval()
 

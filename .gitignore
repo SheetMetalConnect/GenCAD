@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Data (download separately — see README)
+data/
+model/ckpt/
+
+# Results and temp files
+results/
+temp/
+tmp/
+*.stl
+
+# macOS
+.DS_Store
+__MACOSX/
+
+# IDE
+.vscode/
+.idea/
+
+# Environment
+.env
+*.log
