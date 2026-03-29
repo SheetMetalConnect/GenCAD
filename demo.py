@@ -224,56 +224,81 @@ def build_app():
 
         gr.Markdown(
             "# GenCAD — Image to CAD\n"
-            "Upload an image of a mechanical part or pick an example below. "
-            "The pipeline runs edge detection, CLIP encoding, 500-step diffusion, "
-            "and CAD sequence decoding to produce a parametric 3D solid.\n\n"
-            "**Stochastic generation** — hit Generate multiple times for different results from the same image."
+            "### Generate parametric 3D CAD models from 2D images\n\n"
+            "Upload a photo, sketch, or rendered view of a mechanical part. "
+            "GenCAD extracts edges, encodes the image via a contrastive model, "
+            "runs a 500-step diffusion process to generate a CAD latent, then decodes it "
+            "into real parametric geometry (sketch profiles + extrusions with boolean operations).\n\n"
+            "The output is a B-rep solid — not a mesh approximation — exported as STL for visualization and downstream use."
         )
 
         with gr.Row(equal_height=True):
             # --- Left: input ---
             with gr.Column(scale=1):
+                gr.Markdown("#### 1. Input")
                 input_image = gr.Image(
-                    label="Input Image",
+                    label="Drop an image here",
                     type="pil",
                     sources=["upload", "clipboard"],
                     height=300,
                 )
                 generate_btn = gr.Button(
-                    "Generate CAD", variant="primary", size="lg",
+                    "Generate CAD Model", variant="primary", size="lg",
+                )
+                gr.Markdown(
+                    "<small>Accepts PNG, JPG, or any image format. "
+                    "Best results with clean renders or technical sketches of single parts.</small>"
                 )
 
             # --- Center: pipeline intermediate ---
             with gr.Column(scale=1):
+                gr.Markdown("#### 2. Edge Detection")
                 canny_output = gr.Image(
-                    label="Edge Detection (model input)",
+                    label="Canny edges — this is what the neural network sees",
                     type="pil",
                     height=300,
                     interactive=False,
                 )
                 status_box = gr.Textbox(
-                    label="Pipeline Status",
+                    label="Pipeline Log",
                     lines=3,
                     interactive=False,
+                    placeholder="Waiting for input...",
                 )
 
             # --- Right: 3D result ---
             with gr.Column(scale=2):
+                gr.Markdown("#### 3. Generated CAD Model")
                 model_viewer = gr.Model3D(
-                    label="3D Result (rotate / zoom / pan)",
+                    label="Interactive 3D viewer — drag to rotate, scroll to zoom",
                     height=400,
                     clear_color=[0.92, 0.92, 0.92, 1.0],
                 )
-                stl_download = gr.File(label="Download STL")
+                stl_download = gr.File(label="Download STL File")
+
+        # --- How it works ---
+        gr.Markdown(
+            "---\n"
+            "### How It Works\n\n"
+            "| Step | What happens | Time |\n"
+            "|------|-------------|------|\n"
+            "| **Edge Detection** | Canny filter extracts contours from the input image | < 1s |\n"
+            "| **CLIP Encoding** | ResNet-18 encodes the edge image into a 256-dim embedding | < 1s |\n"
+            "| **Diffusion Prior** | 500-step denoising generates a CAD latent from the image embedding | ~9s |\n"
+            "| **CAD Decoding** | Transformer decodes the latent into sketch commands (lines, arcs, circles) + extrusions | < 1s |\n"
+            "| **Solid Construction** | OpenCASCADE builds the B-rep solid and exports STL | < 1s |\n\n"
+            "Generation is **stochastic** — the diffusion prior samples different noise each run. "
+            "Hit Generate multiple times to explore variations of the same input."
+        )
 
         # --- History ---
         gr.Markdown("---\n### Generation History")
         gr.Markdown(
-            "*Each generation uses different diffusion noise. "
-            "Compare results and download the best one.*"
+            "*Compare multiple attempts from the same or different inputs. "
+            "Each run produces a unique result.*"
         )
         history_gallery = gr.Gallery(
-            label="Previous results (most recent first)",
+            label="Previous generations (most recent first)",
             columns=8,
             height=120,
             object_fit="contain",
@@ -300,19 +325,24 @@ def build_app():
 
         # --- Examples ---
         if example_images:
-            gr.Markdown("---\n### Example Images")
+            gr.Markdown("---\n### Example Images\n*Click to load, then hit Generate*")
             gr.Examples(
                 examples=[[img] for img in example_images],
                 inputs=input_image,
-                label="Click to load, then hit Generate",
                 examples_per_page=20,
             )
 
+        # --- Credits ---
         gr.Markdown(
-            "<br><small>GenCAD — "
-            "[Paper (TMLR 2025)](https://openreview.net/pdf?id=e817c1wEZ6) · "
-            "[arXiv](https://arxiv.org/abs/2409.16294) · "
-            "[GitHub](https://github.com/SheetMetalConnect/GenCAD)"
+            "---\n"
+            "<small>\n\n"
+            "**GenCAD** — Image-conditioned CAD Generation with Transformer-based "
+            "Contrastive Representation and Diffusion Priors\n\n"
+            "**Research:** Md Ferdous Alam, Fabian Asprion, Stefan Maier "
+            "([TMLR 2025](https://openreview.net/pdf?id=e817c1wEZ6) "
+            "| [arXiv 2409.16294](https://arxiv.org/abs/2409.16294))\n\n"
+            "**Web demo & deployment:** Luke van Enkhuizen / "
+            "[SheetMetalConnect](https://github.com/SheetMetalConnect/GenCAD)\n\n"
             "</small>"
         )
 
