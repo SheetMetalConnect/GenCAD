@@ -128,34 +128,24 @@ def describe_cad_sequence(out_vec):
 # Inference pipeline
 # ---------------------------------------------------------------------------
 
-def run_inference(image, progress=gr.Progress()):
-    """
-    Full pipeline: image -> canny -> CLIP -> diffusion -> decode -> 3D solid -> STL.
-    Returns: (canny_image, stl_path, status_text)
-    """
-    if image is None:
-        return None, None, "Upload an image first."
+def score_cad_vec(cad_vec):
+    """Score a CAD sequence by geometric complexity. Higher = more interesting."""
+    counts = {"Line": 0, "Arc": 0, "Circle": 0, "Ext": 0}
+    for cmd in cad_vec[:, 0]:
+        idx = int(cmd)
+        if 0 <= idx < len(ALL_COMMANDS):
+            name = ALL_COMMANDS[idx]
+            if name in counts:
+                counts[name] += 1
+    # Reward: more sketch elements + more extrusions = more complex geometry
+    return counts["Line"] + counts["Arc"] * 2 + counts["Circle"] * 2 + counts["Ext"] * 5
 
-    t0 = time.time()
 
-    pil_image = image
-
-    # Step 1: Edge detection
-    progress(0.05, desc="Step 1/5 — Edge detection")
-    canny_img = apply_canny(pil_image)
-    tensor = PREPROCESS(canny_img).unsqueeze(0).to(DEVICE)
-
-    # Step 2: CLIP embedding
-    progress(0.10, desc="Step 2/5 — CLIP image encoding")
-    image_embed = CLIP_ADAPTER.embed_image(tensor, normalization=False)
-
-    # Step 3: Diffusion (bulk of the time)
-    progress(0.15, desc="Step 3/5 — Diffusion sampling (500 steps)...")
+def single_diffusion_attempt(image_embed):
+    """Run one diffusion + decode attempt. Returns (cad_vec, score) or None."""
     latent = DIFFUSION.sample(cond=image_embed)
     latent = latent.unsqueeze(0)
 
-    # Step 4: Decode CAD sequence
-    progress(0.80, desc="Step 4/5 — Decoding CAD commands")
     with torch.no_grad():
         outputs = CAD_DECODER(None, None, z=latent, return_tgt=False)
         batch_out_vec = logits2vec(outputs, device=DEVICE)
@@ -170,39 +160,80 @@ def run_inference(image, progress=gr.Progress()):
     out_vec = auto_batch[0]
     out_command = out_vec[:, 0]
 
-    # Find EOS
+    # Must have valid EOS
     try:
         seq_len = out_command.tolist().index(EOS_IDX)
     except ValueError:
-        elapsed = time.time() - t0
-        return (
-            canny_img, None,
-            f"No valid CAD sequence (no EOS). Try again — diffusion is stochastic. ({elapsed:.1f}s)"
-        )
+        return None
 
     cad_vec = out_vec[:seq_len]
-    summary = describe_cad_sequence(cad_vec)
 
-    # Step 5: Build 3D geometry + export
-    progress(0.90, desc="Step 5/5 — Building 3D geometry + STL export")
+    # Must produce valid geometry
     try:
         out_shape = vec2CADsolid(cad_vec.astype(float))
     except Exception:
+        return None
+
+    return (cad_vec, out_shape, score_cad_vec(cad_vec))
+
+
+def run_inference(image, num_attempts=10, progress=gr.Progress()):
+    """
+    Best-of-N pipeline: run N diffusion attempts, pick the most complex valid result.
+    Returns: (canny_image, stl_path, status_text)
+    """
+    if image is None:
+        return None, None, "Upload an image first."
+
+    t0 = time.time()
+    pil_image = image
+
+    # Step 1: Edge detection
+    progress(0.05, desc="Step 1/5 — Edge detection")
+    canny_img = apply_canny(pil_image)
+    tensor = PREPROCESS(canny_img).unsqueeze(0).to(DEVICE)
+
+    # Step 2: CLIP embedding (once — reused across all attempts)
+    progress(0.10, desc="Step 2/5 — CLIP image encoding")
+    image_embed = CLIP_ADAPTER.embed_image(tensor, normalization=False)
+
+    # Step 3+4: Best-of-N diffusion + decode
+    candidates = []
+    for i in range(num_attempts):
+        pct = 0.15 + (i / num_attempts) * 0.70
+        progress(pct, desc=f"Step 3/5 — Attempt {i+1}/{num_attempts} (diffusion + decode)...")
+        result = single_diffusion_attempt(image_embed)
+        if result is not None:
+            candidates.append(result)
+
+    if not candidates:
         elapsed = time.time() - t0
         return (
             canny_img, None,
-            f"Decoded: {summary} — but geometry construction failed. Try again. ({elapsed:.1f}s)"
+            f"All {num_attempts} attempts failed to produce valid geometry. "
+            f"Try a different image. ({elapsed:.1f}s)"
         )
 
+    # Pick highest-scoring candidate
+    candidates.sort(key=lambda x: x[2], reverse=True)
+    best_vec, best_shape, best_score = candidates[0]
+    summary = describe_cad_sequence(best_vec)
+
+    # Step 5: Export STL
+    progress(0.90, desc="Step 5/5 — Exporting best result as STL")
     stl_dir = tempfile.mkdtemp()
     stl_path = os.path.join(stl_dir, "generated.stl")
     write_stl_file(
-        out_shape, stl_path, mode="binary",
+        best_shape, stl_path, mode="binary",
         linear_deflection=0.5, angular_deflection=0.3,
     )
 
     elapsed = time.time() - t0
-    status = f"Generated: {summary}\nTime: {elapsed:.1f}s | Device: {DEVICE}"
+    status = (
+        f"Best of {len(candidates)}/{num_attempts} valid results\n"
+        f"Generated: {summary} (score: {best_score})\n"
+        f"Time: {elapsed:.1f}s | Device: {DEVICE}"
+    )
     return canny_img, stl_path, status
 
 
@@ -241,6 +272,11 @@ def build_app():
                     type="pil",
                     sources=["upload", "clipboard"],
                     height=300,
+                )
+                attempts_slider = gr.Slider(
+                    minimum=1, maximum=20, value=10, step=1,
+                    label="Attempts (best-of-N)",
+                    info="More attempts = better results, longer wait",
                 )
                 generate_btn = gr.Button(
                     "Generate CAD Model", variant="primary", size="lg",
@@ -284,11 +320,12 @@ def build_app():
             "|------|-------------|------|\n"
             "| **Edge Detection** | Canny filter extracts contours from the input image | < 1s |\n"
             "| **CLIP Encoding** | ResNet-18 encodes the edge image into a 256-dim embedding | < 1s |\n"
-            "| **Diffusion Prior** | 500-step denoising generates a CAD latent from the image embedding | ~9s |\n"
+            "| **Diffusion Prior** | 500-step denoising generates a CAD latent from the image embedding | ~9s per attempt |\n"
             "| **CAD Decoding** | Transformer decodes the latent into sketch commands (lines, arcs, circles) + extrusions | < 1s |\n"
+            "| **Best-of-N Selection** | Runs N attempts, scores by geometric complexity, picks the best valid result | N x ~10s |\n"
             "| **Solid Construction** | OpenCASCADE builds the B-rep solid and exports STL | < 1s |\n\n"
-            "Generation is **stochastic** — the diffusion prior samples different noise each run. "
-            "Hit Generate multiple times to explore variations of the same input."
+            "Use the **Attempts** slider to control quality vs. speed. "
+            "More attempts = higher chance of a complex, valid CAD model."
         )
 
         # --- History ---
@@ -305,8 +342,8 @@ def build_app():
         )
         history_state = gr.State([])
 
-        def generate_with_history(image, history):
-            canny, stl_path, status = run_inference(image)
+        def generate_with_history(image, attempts, history):
+            canny, stl_path, status = run_inference(image, num_attempts=int(attempts))
             download = stl_path
             history = list(history) if history else []
             if canny is not None:
@@ -316,7 +353,7 @@ def build_app():
 
         generate_btn.click(
             fn=generate_with_history,
-            inputs=[input_image, history_state],
+            inputs=[input_image, attempts_slider, history_state],
             outputs=[
                 canny_output, model_viewer, status_box,
                 stl_download, history_gallery, history_state,
