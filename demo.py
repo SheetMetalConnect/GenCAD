@@ -313,51 +313,28 @@ def build_app():
                 stl_download = gr.File(label="Download STL File")
 
         # --- How it works ---
-        gr.Markdown(
-            "---\n"
-            "### How It Works\n\n"
-            "| Step | What happens | Time |\n"
-            "|------|-------------|------|\n"
-            "| **Edge Detection** | Canny filter extracts contours from the input image | < 1s |\n"
-            "| **CLIP Encoding** | ResNet-18 encodes the edge image into a 256-dim embedding | < 1s |\n"
-            "| **Diffusion Prior** | 500-step denoising generates a CAD latent from the image embedding | ~9s per attempt |\n"
-            "| **CAD Decoding** | Transformer decodes the latent into sketch commands (lines, arcs, circles) + extrusions | < 1s |\n"
-            "| **Best-of-N Selection** | Runs N attempts, scores by geometric complexity, picks the best valid result | N x ~10s |\n"
-            "| **Solid Construction** | OpenCASCADE builds the B-rep solid and exports STL | < 1s |\n\n"
-            "Use the **Attempts** slider to control quality vs. speed. "
-            "More attempts = higher chance of a complex, valid CAD model."
-        )
+        with gr.Accordion("How it works", open=False):
+            gr.Markdown(
+                "**Image in, CAD out — in five steps:**\n\n"
+                "1. **Edge Detection** — Canny filter extracts the contours your part\n"
+                "2. **Image Encoding** — ResNet-18 compresses the edges into a 256-dimensional vector\n"
+                "3. **Diffusion Sampling** — 500 denoising steps generate a CAD-space latent from that vector "
+                "(repeated N times with different noise for best-of-N selection)\n"
+                "4. **CAD Decoding** — A transformer converts the latent into parametric sketch commands "
+                "(lines, arcs, circles) and extrusion operations with boolean cuts/fuses\n"
+                "5. **Solid Construction** — OpenCASCADE builds the B-rep solid and exports STL\n\n"
+                "On GPU each attempt takes about 1 second. "
+                "The slider controls how many attempts to try — more attempts, better results."
+            )
 
-        # --- History ---
-        gr.Markdown("---\n### Generation History")
-        gr.Markdown(
-            "*Compare multiple attempts from the same or different inputs. "
-            "Each run produces a unique result.*"
-        )
-        history_gallery = gr.Gallery(
-            label="Previous generations (most recent first)",
-            columns=8,
-            height=120,
-            object_fit="contain",
-        )
-        history_state = gr.State([])
-
-        def generate_with_history(image, attempts, history):
+        def generate(image, attempts):
             canny, stl_path, status = run_inference(image, num_attempts=int(attempts))
-            download = stl_path
-            history = list(history) if history else []
-            if canny is not None:
-                history.insert(0, canny)
-                history = history[:24]
-            return canny, stl_path, status, download, history, history
+            return canny, stl_path, status, stl_path
 
         generate_btn.click(
-            fn=generate_with_history,
-            inputs=[input_image, attempts_slider, history_state],
-            outputs=[
-                canny_output, model_viewer, status_box,
-                stl_download, history_gallery, history_state,
-            ],
+            fn=generate,
+            inputs=[input_image, attempts_slider],
+            outputs=[canny_output, model_viewer, status_box, stl_download],
         )
 
         # --- Examples ---
