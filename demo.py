@@ -274,9 +274,9 @@ def build_app():
                     height=300,
                 )
                 attempts_slider = gr.Slider(
-                    minimum=1, maximum=20, value=10, step=1,
+                    minimum=1, maximum=50, value=20, step=1,
                     label="Attempts (best-of-N)",
-                    info="More attempts = better results, longer wait",
+                    info="More attempts = better results. With GPU: ~1s per attempt.",
                 )
                 generate_btn = gr.Button(
                     "Generate CAD Model", variant="primary", size="lg",
